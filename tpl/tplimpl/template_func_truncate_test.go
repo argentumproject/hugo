@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tpl
+package tplimpl
 
 import (
 	"html/template"
@@ -21,6 +21,7 @@ import (
 )
 
 func TestTruncate(t *testing.T) {
+	t.Parallel()
 	var err error
 	cases := []struct {
 		v1    interface{}

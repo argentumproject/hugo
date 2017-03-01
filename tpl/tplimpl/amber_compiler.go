@@ -1,4 +1,4 @@
-// Copyright 2015 The Hugo Authors. All rights reserved.
+// Copyright 2017 The Hugo Authors. All rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -11,21 +11,32 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package hugolib
+package tplimpl
 
 import (
-	"github.com/spf13/hugo/tpl"
-	"testing"
+	"html/template"
+
+	"github.com/eknkc/amber"
 )
 
-const (
-	win_base = "c:\\a\\windows\\path\\layout"
-	win_path = "c:\\a\\windows\\path\\layout\\sub1\\index.html"
-)
+func (gt *GoHTMLTemplate) CompileAmberWithTemplate(b []byte, path string, t *template.Template) (*template.Template, error) {
+	c := amber.New()
 
-func TestTemplatePathSeparator(t *testing.T) {
-	tmpl := new(tpl.GoHTMLTemplate)
-	if name := tmpl.GenerateTemplateNameFrom(win_base, win_path); name != "sub1/index.html" {
-		t.Fatalf("Template name incorrect. got %s but expected %s", name, "sub1/index.html")
+	if err := c.ParseData(b, path); err != nil {
+		return nil, err
 	}
+
+	data, err := c.CompileString()
+
+	if err != nil {
+		return nil, err
+	}
+
+	tpl, err := t.Funcs(gt.amberFuncMap).Parse(data)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return tpl, nil
 }

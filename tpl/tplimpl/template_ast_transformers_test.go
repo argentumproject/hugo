@@ -10,7 +10,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-package tpl
+package tplimpl
 
 import (
 	"bytes"
@@ -113,6 +113,7 @@ F3: {{ Echo (printf "themes/%s-theme" .Site.Params.LOWER) }}
 )
 
 func TestParamsKeysToLower(t *testing.T) {
+	t.Parallel()
 
 	require.Error(t, applyTemplateTransformers(nil))
 
@@ -190,6 +191,7 @@ func BenchmarkTemplateParamsKeysToLower(b *testing.B) {
 }
 
 func TestParamsKeysToLowerVars(t *testing.T) {
+	t.Parallel()
 	var (
 		ctx = map[string]interface{}{
 			"Params": map[string]interface{}{
@@ -227,6 +229,7 @@ Blue: {{ $__amber_1.Blue}}
 }
 
 func TestParamsKeysToLowerInBlockTemplate(t *testing.T) {
+	t.Parallel()
 
 	var (
 		ctx = map[string]interface{}{

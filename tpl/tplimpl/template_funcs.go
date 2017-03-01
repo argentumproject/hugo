@@ -13,7 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tpl
+package tplimpl
 
 import (
 	"bytes"
@@ -40,13 +40,14 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/spf13/hugo/hugofs"
+
 	"github.com/bep/inflect"
 	"github.com/spf13/afero"
 	"github.com/spf13/cast"
 	"github.com/spf13/hugo/deps"
 	"github.com/spf13/hugo/helpers"
 	jww "github.com/spf13/jwalterweatherman"
-	"github.com/spf13/viper"
 
 	// Importing image codecs for image.DecodeConfig
 	_ "image/gif"
@@ -58,7 +59,7 @@ import (
 type templateFuncster struct {
 	funcMap        template.FuncMap
 	cachedPartials partialCache
-
+	image          *imageHandler
 	*deps.Deps
 }
 
@@ -66,6 +67,7 @@ func newTemplateFuncster(deps *deps.Deps) *templateFuncster {
 	return &templateFuncster{
 		Deps:           deps,
 		cachedPartials: partialCache{p: make(map[string]template.HTML)},
+		image:          &imageHandler{fs: deps.Fs, imageConfigCache: map[string]image.Config{}},
 	}
 }
 
@@ -397,63 +399,43 @@ func intersect(l1, l2 interface{}) (interface{}, error) {
 	}
 }
 
-// ResetCaches resets all caches that might be used during build.
-func ResetCaches() {
-	resetImageConfigCache()
-}
-
-// imageConfigCache is a lockable cache for image.Config objects. It must be
-// locked before reading or writing to config.
-type imageConfigCache struct {
-	config map[string]image.Config
+type imageHandler struct {
+	imageConfigCache map[string]image.Config
 	sync.RWMutex
-}
-
-var defaultImageConfigCache = imageConfigCache{
-	config: map[string]image.Config{},
-}
-
-// resetImageConfigCache initializes and resets the imageConfig cache for the
-// imageConfig template function. This should be run once before every batch of
-// template renderers so the cache is cleared for new data.
-func resetImageConfigCache() {
-	defaultImageConfigCache.Lock()
-	defer defaultImageConfigCache.Unlock()
-
-	defaultImageConfigCache.config = map[string]image.Config{}
+	fs *hugofs.Fs
 }
 
 // imageConfig returns the image.Config for the specified path relative to the
-// working directory. resetImageConfigCache must be run beforehand.
-func (t *templateFuncster) imageConfig(path interface{}) (image.Config, error) {
+// working directory.
+func (ic *imageHandler) config(path interface{}) (image.Config, error) {
 	filename, err := cast.ToStringE(path)
 	if err != nil {
 		return image.Config{}, err
 	}
 
 	if filename == "" {
-		return image.Config{}, errors.New("imageConfig needs a filename")
+		return image.Config{}, errors.New("config needs a filename")
 	}
 
 	// Check cache for image config.
-	defaultImageConfigCache.RLock()
-	config, ok := defaultImageConfigCache.config[filename]
-	defaultImageConfigCache.RUnlock()
+	ic.RLock()
+	config, ok := ic.imageConfigCache[filename]
+	ic.RUnlock()
 
 	if ok {
 		return config, nil
 	}
 
-	f, err := t.Fs.WorkingDir.Open(filename)
+	f, err := ic.fs.WorkingDir.Open(filename)
 	if err != nil {
 		return image.Config{}, err
 	}
 
 	config, _, err = image.DecodeConfig(f)
 
-	defaultImageConfigCache.Lock()
-	defaultImageConfigCache.config[filename] = config
-	defaultImageConfigCache.Unlock()
+	ic.Lock()
+	ic.imageConfigCache[filename] = config
+	ic.Unlock()
 
 	return config, err
 }
@@ -1357,31 +1339,29 @@ func returnWhenSet(a, k interface{}) interface{} {
 }
 
 // highlight returns an HTML string with syntax highlighting applied.
-func highlight(in interface{}, lang, opts string) (template.HTML, error) {
+func (t *templateFuncster) highlight(in interface{}, lang, opts string) (template.HTML, error) {
 	str, err := cast.ToStringE(in)
 
 	if err != nil {
 		return "", err
 	}
 
-	return template.HTML(helpers.Highlight(html.UnescapeString(str), lang, opts)), nil
+	return template.HTML(helpers.Highlight(t.Cfg, html.UnescapeString(str), lang, opts)), nil
 }
 
 var markdownTrimPrefix = []byte("<p>")
 var markdownTrimSuffix = []byte("</p>\n")
 
 // markdownify renders a given string from Markdown to HTML.
-func markdownify(in interface{}) (template.HTML, error) {
+func (t *templateFuncster) markdownify(in interface{}) (template.HTML, error) {
 	text, err := cast.ToStringE(in)
 	if err != nil {
 		return "", err
 	}
 
-	language := viper.Get("currentContentLanguage").(*helpers.Language)
-
-	m := helpers.RenderBytes(&helpers.RenderingContext{
-		ConfigProvider: language,
-		Content:        []byte(text), PageFmt: "markdown"})
+	m := t.ContentSpec.RenderBytes(&helpers.RenderingContext{
+		Cfg:     t.Cfg,
+		Content: []byte(text), PageFmt: "markdown"})
 	m = bytes.TrimPrefix(m, markdownTrimPrefix)
 	m = bytes.TrimSuffix(m, markdownTrimSuffix)
 	return template.HTML(m), nil
@@ -2143,11 +2123,11 @@ func (t *templateFuncster) initFuncMap() {
 		"getenv":        getenv,
 		"gt":            gt,
 		"hasPrefix":     hasPrefix,
-		"highlight":     highlight,
+		"highlight":     t.highlight,
 		"htmlEscape":    htmlEscape,
 		"htmlUnescape":  htmlUnescape,
 		"humanize":      humanize,
-		"imageConfig":   t.imageConfig,
+		"imageConfig":   t.image.config,
 		"in":            in,
 		"index":         index,
 		"int":           func(v interface{}) (int, error) { return cast.ToIntE(v) },
@@ -2159,7 +2139,7 @@ func (t *templateFuncster) initFuncMap() {
 		"le":            le,
 		"lower":         lower,
 		"lt":            lt,
-		"markdownify":   markdownify,
+		"markdownify":   t.markdownify,
 		"md5":           md5,
 		"mod":           mod,
 		"modBool":       modBool,
@@ -2211,8 +2191,8 @@ func (t *templateFuncster) initFuncMap() {
 		"upper":        upper,
 		"urlize":       t.PathSpec.URLize,
 		"where":        where,
-		"i18n":         i18nTranslate,
-		"T":            i18nTranslate,
+		"i18n":         t.Translate,
+		"T":            t.Translate,
 	}
 
 	t.funcMap = funcMap
